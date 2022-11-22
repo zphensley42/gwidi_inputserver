@@ -10,116 +10,12 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+
+#define MAXSTR 1000
+
 namespace gwidi::input {
-
-std::string ipForSin(const sockaddr_in& sin) {
-    char str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(sin.sin_addr), str, INET_ADDRSTRLEN);
-    return {str};
-}
-
-ReaderSocketClient::ReaderSocketClient(const sockaddr_in &toAddr) {
-    sockfd = socket(PF_INET, SOCK_DGRAM, 0);
-    memset(&m_toAddr, '\0', sizeof(m_toAddr));
-    m_toAddr.sin_family = AF_INET;
-    m_toAddr.sin_port = htons(5578);
-    m_toAddr.sin_addr.s_addr = toAddr.sin_addr.s_addr;
-}
-
-void ReaderSocketClient::sendKeyEvent(const KeyEvent &event) {
-    auto toIp = ipForSin(m_toAddr);
-    spdlog::info("Sending KeyEvent[ code: {}, eventType: {} ] to client: {}, port: {}", event.code, event.eventType, toIp,
-                 ntohs(m_toAddr.sin_port));
-
-    memset(buffer, '\0', sizeof(buffer));
-    memcpy(buffer, &(event.code), sizeof(int));
-    memcpy(buffer + sizeof(int), &(event.eventType), sizeof(int));
-
-    auto bytesSent = sendto(sockfd, buffer, 100, 0, (struct sockaddr*)&m_toAddr, sizeof(m_toAddr));
-    spdlog::info("Sent {} bytes of data", bytesSent);
-}
-
-void ReaderSocketServer::beginListening() {
-    if(m_thAlive.load()) {
-        return;
-    }
-
-    m_thAlive.store(true);
-
-    m_th = std::make_shared<std::thread>([this] {
-        // For now, port is here
-        int port = 5577;
-        int sockfd;
-        struct sockaddr_in socketIn_server, socketIn_client;
-        char buffer[1024];  // probably too big for our needs
-        socklen_t addr_size;
-
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-
-        memset(&socketIn_server, '\0', sizeof(socketIn_server));
-        socketIn_server.sin_family = AF_INET;
-        socketIn_server.sin_port = htons(port);
-        socketIn_server.sin_addr.s_addr = inet_addr("127.0.0.1");   // local listening server
-
-        auto bindStatus = bind(sockfd, (struct sockaddr*)&socketIn_server, sizeof(socketIn_server));
-        if(bindStatus != 0) {
-            spdlog::warn("Failed to bind listening socket!");
-            m_thAlive.store(false);
-            return;
-        }
-
-        addr_size = sizeof(socketIn_client);
-        sockaddr_in selected_client{};
-        bool client_selected = false;
-        while(m_thAlive.load()) {
-            memset(buffer, '\0', sizeof(buffer));
-            recvfrom(sockfd, buffer, 1024, 0, (struct sockaddr*)&socketIn_client, &addr_size);  // Should loop this to continue receiving messages
-            spdlog::info("Received message from client: {}, message: {}", ipForSin(socketIn_client), buffer);
-            // TODO: Probably do some type of shared secret thing where we only accept clients we trust
-            // TODO: For now, just look for a header message first to determine this is our client (assign only a single client at a time)
-
-            auto helloMsgPre = "msg_hello";
-            auto selectionMessageMatched = strncmp(helloMsgPre, buffer, strlen(helloMsgPre)) == 0;
-            if(!client_selected && selectionMessageMatched) {
-                client_selected = true;
-                selected_client = socketIn_client;
-                m_socketClient = new ReaderSocketClient(selected_client);
-            }
-            else {
-                auto selected_client_ip = ipForSin(selected_client);
-                auto in_client_ip = ipForSin(socketIn_client);
-                spdlog::warn("Ignoring connection/message -- client_selected: {}, selected_client: {}, socketIn_client: {}", client_selected, selected_client_ip, in_client_ip);
-            }
-        }
-        if(m_socketClient != nullptr) {
-            delete m_socketClient;
-            m_socketClient = nullptr;
-        }
-
-        m_thAlive.store(false);
-    });
-    m_th->detach();
-}
-
-void ReaderSocketServer::stopListening() {
-    m_thAlive.store(false);
-}
-
-ReaderSocketServer::~ReaderSocketServer() {
-    if(m_thAlive.load() && m_th->joinable()) {
-        m_thAlive.store(false);
-        m_th->join();
-    }
-    else {
-        m_thAlive.store(false);
-    }
-}
-
-void ReaderSocketServer::sendKeyEvent(const KeyEvent &event) {
-    if(m_socketClient) {
-        m_socketClient->sendKeyEvent(event);
-    }
-}
 
 
 int LinuxInputReader::m_timeoutMs{5000};
@@ -160,9 +56,6 @@ void LinuxInputReader::beginListening() {
         return;
     }
 
-    m_socketServer = std::make_shared<ReaderSocketServer>();
-    m_socketServer->beginListening();
-
     m_thAlive.store(true);
 
     m_th = std::make_shared<std::thread>([this] {
@@ -183,13 +76,9 @@ void LinuxInputReader::beginListening() {
                         // value: or 0 for EV_KEY for release, 1 for keypress and 2 for autorepeat
                         if(ev.type == EV_KEY && ev.code < 0x100) {
                             if(keyWatched(ev.code)) {
-                                if(ev.value == 0) {
-                                    spdlog::info("Key released: {}", ev.code);
-                                    sendKeyEvent(ev.code, ev.value);
-                                }
-                                else if(ev.value == 1) {
-                                    spdlog::info("Key pressed: {}", ev.code);
-                                    sendKeyEvent(ev.code, ev.value);
+                                if((ev.value == 0 || ev.value == 1) && m_watchedKeyCb) {
+                                    spdlog::info("sending key: {}, {}", ev.code, ev.value);
+                                    m_watchedKeyCb(ev.code, ev.value);
                                 }
                             }
                         }
@@ -209,15 +98,169 @@ void LinuxInputReader::stopListening() {
     m_thAlive.store(false);
 }
 
-void LinuxInputReader::sendKeyEvent(int code, int eventType) {
-    m_socketServer->sendKeyEvent(KeyEvent{code, eventType});
-}
-
 bool LinuxInputReader::keyWatched(int code) {
     return std::find(m_watchedKeys.begin(), m_watchedKeys.end(), code) != m_watchedKeys.end();
 }
 
 LinuxInputReader::~LinuxInputReader() {
+    if(m_thAlive.load() && m_th->joinable()) {
+        m_thAlive.store(false);
+        m_th->join();
+    }
+    else {
+        m_thAlive.store(false);
+    }
+}
+
+
+std::string InputFocusDetector::currentFocusedWindowName() {
+    auto window = getWindowProperty(m_rootWindow, m_display, "_NET_ACTIVE_WINDOW");
+    auto windowName = getStringProperty(window, m_display, "_NET_WM_NAME");
+    return std::string{reinterpret_cast<char*>(windowName)};
+}
+
+unsigned long InputFocusDetector::getWindowProperty(unsigned long window, Display* display, char *propName) {
+    auto prop = getStringProperty(window, display, propName);
+    unsigned long long_property = prop[0] + (prop[1]<<8) + (prop[2]<<16) + (prop[3]<<24);
+    return long_property;
+}
+
+unsigned char *InputFocusDetector::getStringProperty(unsigned long window, Display* display, char* propName) {
+    Atom actual_type, filter_atom;
+    int actual_format, status;
+    unsigned long nitems, bytes_after;
+
+    unsigned char* prop;
+
+    filter_atom = XInternAtom(display, propName, True);
+    status = XGetWindowProperty(display, window, filter_atom, 0, MAXSTR, False, AnyPropertyType,
+                                &actual_type, &actual_format, &nitems, &bytes_after, &prop);
+    statusCheck(status, window);
+    return prop;
+}
+
+void InputFocusDetector::statusCheck(int status, unsigned long window) {
+    if (status == BadWindow) {
+        spdlog::error("window id # {} does not exist!", window);
+    }
+
+    if (status != Success) {
+        spdlog::error("XGetWindowProperty failed!");
+    }
+}
+
+std::map<std::string, std::string> InputFocusDetector::windowStats() {
+    auto window = getWindowProperty(m_rootWindow, m_display, "_NET_ACTIVE_WINDOW");
+
+    auto windowClass = getStringProperty(window, m_display, "WM_CLASS");
+    auto windowName = getStringProperty(window, m_display, "_NET_WM_NAME");
+    auto pid = getWindowProperty(window, m_display, "_NET_WM_PID");
+
+    return {
+            {"_NET_WM_PID", fmt::format("{}", pid)},
+            {"WM_CLASS", std::string{reinterpret_cast<char*>(windowClass)}},
+            {"_NET_WM_NAME", std::string{reinterpret_cast<char*>(windowName)}},
+    };
+}
+
+// https://stackoverflow.com/questions/57896007/detect-window-focus-changes-with-xcb
+// https://stackoverflow.com/questions/27910906/xlib-test-window-names
+InputFocusDetector::InputFocusDetector() {
+    char* displayName = nullptr;
+
+    m_display = XOpenDisplay(displayName);
+    if (m_display == nullptr) {
+        spdlog::error("Unable to open display: {}", XDisplayName(displayName));
+    }
+    int screen = XDefaultScreen(m_display);
+    m_rootWindow = RootWindow(m_display, screen);
+
+    getAllWindowsFromRoot(m_rootWindow);
+}
+
+// TODO: Register for focus events for a specific window instead of having to poll
+// https://tronche.com/gui/x/xlib/event-handling/selecting.html
+void InputFocusDetector::registerForWindowEvents() {
+    if(m_selectedWindowName.empty()) {
+        m_selectedWindowName = "gwidi_inputserver – LinuxInputReader.cc";
+    }
+
+    // First, ensure that we have a window
+    auto it = m_windowTree.find(m_selectedWindowName);
+    if(it != m_windowTree.end()) {
+        m_selectedWindow = it->second;
+        spdlog::info("Found window for name: {}", it->first);
+
+        XSelectInput(m_display, it->second, FocusChangeMask);
+        XEvent nextEvent;
+
+        while(m_thAlive.load()) {
+            auto status = XNextEvent(m_display, &nextEvent);
+            if(nextEvent.type == FocusIn | nextEvent.type == FocusOut) {
+                auto event = nextEvent.xfocus;
+                auto isFocused = event.type == FocusIn;
+                spdlog::info("FocusChangeMask event notify received, has focus: {}", isFocused);
+                if(isFocused) {
+                    if(m_gainFocusCb) {
+                        m_gainFocusCb();
+                    }
+                }
+                else if(m_loseFocusCb) {
+                    m_loseFocusCb();
+                }
+            }
+        }
+    }
+}
+
+void InputFocusDetector::getAllWindowsFromRoot(Window root) {
+    Window root_ret;
+    Window parent_ret;
+    Window *children_ret;
+    unsigned int child_count;
+
+    auto status = XQueryTree(m_display, root, &root_ret, &parent_ret, &children_ret, &child_count);
+    for(auto i = 0; i < child_count; i++) {
+        auto child = children_ret[i];
+        auto childWinName = getStringProperty(child, m_display, "_NET_WM_NAME");
+        auto wmClass = getStringProperty(child, m_display, "WM_CLASS");
+        if(childWinName != nullptr) {
+            auto winStr = std::string{reinterpret_cast<char*>(childWinName)};
+            spdlog::info("child window name: {}", winStr);
+            m_windowTree[winStr] = child;
+        }
+
+        if(wmClass != nullptr) {
+            auto wmStr = std::string{reinterpret_cast<char*>(wmClass)};
+            spdlog::info("child window class: {}", wmStr);
+        }
+
+        getAllWindowsFromRoot(child);
+    }
+
+    if(children_ret != nullptr) {
+        XFree(children_ret);
+    }
+}
+
+void InputFocusDetector::beginListening() {
+    if(m_thAlive.load()) {
+        return;
+    }
+
+    m_thAlive.store(true);
+
+    m_th = std::make_shared<std::thread>([this] {
+        registerForWindowEvents();
+    });
+    m_th->detach();
+}
+
+void InputFocusDetector::stopListening() {
+    m_thAlive.store(false);
+}
+
+InputFocusDetector::~InputFocusDetector() {
     if(m_thAlive.load() && m_th->joinable()) {
         m_thAlive.store(false);
         m_th->join();
