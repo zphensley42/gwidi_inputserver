@@ -47,6 +47,31 @@ void ReaderSocketClient::sendWindowFocusEvent(const std::string &windowName, boo
     spdlog::info("Sent {} bytes of data", bytesSent);
 }
 
+void ReaderSocketClient::sendHello() {
+    auto toIp = ipForSin(m_toAddr);
+
+    char* buffer = new char[1024];
+    memset(buffer, '\0', sizeof(char) * 1024);
+
+    std::size_t bufferOffset = 0;
+
+    std::string msg = "msg_helloback";
+    std::size_t msg_size = msg.size();
+    int msg_type = static_cast<int>(ServerEventType::EVENT_HELLO);
+
+    memcpy(buffer + bufferOffset, &(msg_type), sizeof(int));
+    bufferOffset += sizeof(int);
+
+    memcpy(buffer + bufferOffset, &(msg_size), sizeof(msg_size));
+    bufferOffset += sizeof(msg_size);
+
+    memcpy(buffer + bufferOffset, &(msg[0]), sizeof(char) * msg_size);
+    bufferOffset += sizeof(char) * msg_size;
+
+    auto bytesSent = sendto(sockfd, buffer, 1024, 0, (struct sockaddr*)&m_toAddr, sizeof(m_toAddr));
+    spdlog::info("Sent {} bytes of data", bytesSent);
+}
+
 void ReaderSocketServer::beginListening() {
     if(m_thAlive.load()) {
         return;
@@ -77,8 +102,6 @@ void ReaderSocketServer::beginListening() {
         }
 
         addr_size = sizeof(socketIn_client);
-        sockaddr_in selected_client{};
-        bool client_selected = false;
         while(m_thAlive.load()) {
             memset(buffer, '\0', sizeof(buffer));
             recvfrom(sockfd, buffer, 1024, 0, (struct sockaddr*)&socketIn_client, &addr_size);  // Should loop this to continue receiving messages
@@ -86,18 +109,7 @@ void ReaderSocketServer::beginListening() {
             // TODO: Probably do some type of shared secret thing where we only accept clients we trust
             // TODO: For now, just look for a header message first to determine this is our client (assign only a single client at a time)
 
-            auto helloMsgPre = "msg_hello";
-            auto selectionMessageMatched = strncmp(helloMsgPre, buffer, strlen(helloMsgPre)) == 0;
-            if(!client_selected && selectionMessageMatched) {
-                client_selected = true;
-                selected_client = socketIn_client;
-                m_socketClient = new ReaderSocketClient(selected_client);
-            }
-            else {
-                auto selected_client_ip = ipForSin(selected_client);
-                auto in_client_ip = ipForSin(socketIn_client);
-                spdlog::warn("Ignoring connection/message -- client_selected: {}, selected_client: {}, socketIn_client: {}", client_selected, selected_client_ip, in_client_ip);
-            }
+            processEvent(buffer, socketIn_client);
         }
         if(m_socketClient != nullptr) {
             delete m_socketClient;
@@ -132,6 +144,64 @@ void ReaderSocketServer::sendKeyEvent(const KeyEvent &event) {
 void ReaderSocketServer::sendWindowFocusEvent(const std::string &windowName, bool hasFocus) {
     if(m_socketClient) {
         m_socketClient->sendWindowFocusEvent(windowName, hasFocus);
+    }
+}
+
+void ReaderSocketServer::processEvent(char *buffer, struct sockaddr_in socketIn_client) {
+    // The message we expect to receive is of the format: [{msg_type}{size}{message}]
+    std::size_t bufferOffset = 0;
+    int msg_type;
+    memcpy(&msg_type, buffer, sizeof(int));
+    bufferOffset += sizeof(int);
+
+    switch(static_cast<ServerEventType>(msg_type)) {
+        case ServerEventType::EVENT_HELLO: {
+            std::size_t msgSize;
+            memcpy(&msgSize, buffer + bufferOffset, sizeof(std::size_t));
+            bufferOffset += sizeof(std::size_t);
+
+            char* msg = nullptr;
+            if(msgSize > 0 && msgSize <= 1024) {
+                msg = new char[msgSize];
+                memcpy(&msg[0], buffer + bufferOffset, msgSize);
+                bufferOffset += msgSize;
+            }
+
+            // verify our hello string
+            auto helloMsgPre = "msg_hello";
+            auto selectionMessageMatched = strncmp(helloMsgPre, msg, strlen(helloMsgPre)) == 0;
+
+            if(!m_socketClient && selectionMessageMatched) {
+                m_socketClient = new ReaderSocketClient(socketIn_client);
+                m_socketClient->sendHello();
+            }
+
+            break;
+        }
+        case ServerEventType::EVENT_WATCHEDKEYS_RECONFIGURE: {
+            // Parse out the data
+            std::size_t listSize;
+            memcpy(&listSize, buffer + bufferOffset, sizeof(std::size_t));
+            bufferOffset += sizeof(std::size_t);
+
+            // TODO: Want to make sure we delete this list of keys after use
+            int* keys = new int[listSize];
+            for(auto i = 0; i < listSize; i++) {
+                int key;
+                memcpy(&key, buffer + bufferOffset, sizeof(int));
+                keys[i] = key;
+                bufferOffset += sizeof(int);
+            }
+            // Pass the data to the input reader
+            if(m_eventCb) {
+                m_eventCb(ServerEventType::EVENT_WATCHEDKEYS_RECONFIGURE, {.watchedKeysReconfigEvent{listSize, keys}});
+            }
+            break;
+        }
+        default: {
+            spdlog::warn("Message type not supported, message: {}", buffer);
+            break;
+        }
     }
 }
 

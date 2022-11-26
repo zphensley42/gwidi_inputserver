@@ -24,6 +24,12 @@ if(NOT TARGET gwidi_socketserver)
     find_package(gwidi_socketserver REQUIRED)
 endif()
 
-add_executable(gwidi_inputserver run_server.cc)
-target_include_directories(gwidi_inputserver PRIVATE ${linux_inputreader_INCLUDE_DIRS} ${linux_sendinput_INCLUDE_DIRS} ${gwidi_socketserver_INCLUDE_DIRS})
-target_link_libraries(gwidi_inputserver PRIVATE ${linux_inputreader_LIBRARIES} ${linux_sendinput_LIBRARIES} ${gwidi_socketserver_LIBRARIES})
+if(NOT TARGET gwidi_server)
+    set(gwidi_server_DIR ${CMAKE_CURRENT_LIST_DIR}/gwidi_server)
+    find_package(gwidi_server REQUIRED)
+endif()
+
+add_executable(run_server run_server.cc)
+target_include_directories(run_server PRIVATE ${linux_inputreader_INCLUDE_DIRS} ${linux_sendinput_INCLUDE_DIRS} ${gwidi_socketserver_INCLUDE_DIRS} ${gwidi_server_INCLUDE_DIRS})
+target_link_libraries(run_server PRIVATE ${linux_inputreader_LIBRARIES} ${linux_sendinput_LIBRARIES} ${gwidi_socketserver_LIBRARIES} ${gwidi_server_LIBRARIES})
+

@@ -250,6 +250,14 @@ void InputFocusDetector::beginListening() {
 
     m_thAlive.store(true);
 
+    // First, send a gain focus if we are already focused when we start
+    auto curWindow = currentFocusedWindowName();
+    if(curWindow == m_selectedWindowName) {
+        if(m_gainFocusCb) {
+            m_gainFocusCb();
+        }
+    }
+
     m_th = std::make_shared<std::thread>([this] {
         registerForWindowEvents();
     });

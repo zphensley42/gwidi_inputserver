@@ -32,9 +32,6 @@ public:
         m_watchedKeyCb = cb;
     }
 
-    // TODO: Callback for watched keys -> don't make the socket server a child of this, instead hook them up
-
-
     ~LinuxInputReader();
 
 private:
@@ -61,6 +58,10 @@ public:
 
     void beginListening();
     void stopListening();
+
+    inline bool isAlive() {
+        return m_thAlive.load();
+    }
 
     inline void setGainFocusCb(std::function<void()> cb) {
         m_gainFocusCb = std::move(cb);

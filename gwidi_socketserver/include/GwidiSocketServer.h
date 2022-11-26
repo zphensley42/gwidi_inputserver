@@ -5,13 +5,16 @@
 #include <atomic>
 #include <thread>
 #include <memory>
+#include <functional>
 #include <string>
 
 namespace gwidi::udpsocket {
 
 enum ServerEventType {
-    EVENT_KEY = 0,
-    EVENT_FOCUS = 1
+    EVENT_HELLO = 0,
+    EVENT_KEY = 1,
+    EVENT_FOCUS = 2,
+    EVENT_WATCHEDKEYS_RECONFIGURE = 3
 };
 
 struct KeyEvent {
@@ -25,9 +28,15 @@ struct WindowFocusEvent {
     bool hasFocus;
 };
 
+struct WatchedKeysReconfigEvent {
+    std::size_t watchedKeysSize;
+    int* watchedKeysList;
+};
+
 union ServerEvent {
     KeyEvent keyEvent;
     WindowFocusEvent focusEvent;
+    WatchedKeysReconfigEvent watchedKeysReconfigEvent;
 };
 
 struct EventBuffer {
@@ -60,6 +69,7 @@ public:
     explicit ReaderSocketClient(const sockaddr_in& toAddr);
     void sendKeyEvent(const KeyEvent& event);
     void sendWindowFocusEvent(const std::string &windowName, bool hasFocus);
+    void sendHello();
 private:
     int sockfd;
     struct sockaddr_in m_toAddr;
@@ -67,6 +77,8 @@ private:
 
 class ReaderSocketServer {
 public:
+    using EventCb = std::function<void(ServerEventType, ServerEvent)>;
+
     void beginListening();
     void stopListening();
 
@@ -78,12 +90,19 @@ public:
         return m_socketClient != nullptr;
     }
 
+    inline void setEventCb(EventCb cb) {
+        m_eventCb = std::move(cb);
+    }
+
+    void processEvent(char* buffer, struct sockaddr_in socketIn_client);
     void sendKeyEvent(const KeyEvent &event);
     void sendWindowFocusEvent(const std::string &windowName, bool hasFocus);
 
     ~ReaderSocketServer();
 
 private:
+    EventCb m_eventCb;
+
     std::atomic_bool m_thAlive{false};
     std::shared_ptr<std::thread> m_th;
     ReaderSocketClient* m_socketClient{nullptr};
