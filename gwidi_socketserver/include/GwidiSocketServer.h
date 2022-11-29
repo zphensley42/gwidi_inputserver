@@ -42,6 +42,10 @@ union ServerEvent {
 struct EventBuffer {
     char* buffer;
     std::size_t bufferSize;
+
+    ~EventBuffer() {
+        delete[] buffer;
+    }
 };
 
 class EventBuilder {
@@ -105,7 +109,7 @@ private:
 
     std::atomic_bool m_thAlive{false};
     std::shared_ptr<std::thread> m_th;
-    ReaderSocketClient* m_socketClient{nullptr};
+    std::shared_ptr<ReaderSocketClient> m_socketClient{nullptr};
 };
 
 }

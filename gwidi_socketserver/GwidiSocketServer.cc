@@ -70,6 +70,8 @@ void ReaderSocketClient::sendHello() {
 
     auto bytesSent = sendto(sockfd, buffer, 1024, 0, (struct sockaddr*)&m_toAddr, sizeof(m_toAddr));
     spdlog::info("Sent {} bytes of data", bytesSent);
+
+    delete[] buffer;
 }
 
 void ReaderSocketServer::beginListening() {
@@ -111,10 +113,7 @@ void ReaderSocketServer::beginListening() {
 
             processEvent(buffer, socketIn_client);
         }
-        if(m_socketClient != nullptr) {
-            delete m_socketClient;
-            m_socketClient = nullptr;
-        }
+        m_socketClient = nullptr;
 
         m_thAlive.store(false);
     });
@@ -160,21 +159,25 @@ void ReaderSocketServer::processEvent(char *buffer, struct sockaddr_in socketIn_
             memcpy(&msgSize, buffer + bufferOffset, sizeof(std::size_t));
             bufferOffset += sizeof(std::size_t);
 
-            char* msg = nullptr;
-            if(msgSize > 0 && msgSize <= 1024) {
-                msg = new char[msgSize];
-                memcpy(&msg[0], buffer + bufferOffset, msgSize);
-                bufferOffset += msgSize;
+            // We probably shouldn't cap here, but this is trying to catch cases where junk data still matches our event type
+            if(msgSize >= 1024) {
+                msgSize = 1024;
             }
+            char* msg = new char[msgSize];
+            memcpy(&msg[0], buffer + bufferOffset, msgSize);
+            bufferOffset += msgSize;
 
             // verify our hello string
             auto helloMsgPre = "msg_hello";
             auto selectionMessageMatched = strncmp(helloMsgPre, msg, strlen(helloMsgPre)) == 0;
 
-            if(!m_socketClient && selectionMessageMatched) {
-                m_socketClient = new ReaderSocketClient(socketIn_client);
+            // Always accept a new client in case we dc or restart the client (we only accept one client at a time, currently)
+            if(selectionMessageMatched) {
+                m_socketClient = std::make_shared<ReaderSocketClient>(socketIn_client);
                 m_socketClient->sendHello();
             }
+
+            delete[] msg;
 
             break;
         }

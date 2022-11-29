@@ -83,8 +83,8 @@ private:
     void getAllWindowsFromRoot(Window root);
 
     void statusCheck(int status, unsigned long window);
-    unsigned char* getStringProperty(unsigned long window, Display* display, char* propName);
-    unsigned long getWindowProperty(unsigned long window, Display* display, char* propName);
+    unsigned char* getStringProperty(unsigned long window, Display* display, const char* propName);
+    unsigned long getWindowProperty(unsigned long window, Display* display, const char* propName);
 
     void registerForWindowEvents();
 

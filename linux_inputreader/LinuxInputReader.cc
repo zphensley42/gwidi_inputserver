@@ -116,16 +116,19 @@ LinuxInputReader::~LinuxInputReader() {
 std::string InputFocusDetector::currentFocusedWindowName() {
     auto window = getWindowProperty(m_rootWindow, m_display, "_NET_ACTIVE_WINDOW");
     auto windowName = getStringProperty(window, m_display, "_NET_WM_NAME");
-    return std::string{reinterpret_cast<char*>(windowName)};
+    auto ret = std::string{reinterpret_cast<char*>(windowName)};
+    XFree(windowName);
+    return ret;
 }
 
-unsigned long InputFocusDetector::getWindowProperty(unsigned long window, Display* display, char *propName) {
+unsigned long InputFocusDetector::getWindowProperty(unsigned long window, Display* display, const char *propName) {
     auto prop = getStringProperty(window, display, propName);
     unsigned long long_property = prop[0] + (prop[1]<<8) + (prop[2]<<16) + (prop[3]<<24);
+    XFree(prop);
     return long_property;
 }
 
-unsigned char *InputFocusDetector::getStringProperty(unsigned long window, Display* display, char* propName) {
+unsigned char *InputFocusDetector::getStringProperty(unsigned long window, Display* display, const char* propName) {
     Atom actual_type, filter_atom;
     int actual_format, status;
     unsigned long nitems, bytes_after;
@@ -156,11 +159,16 @@ std::map<std::string, std::string> InputFocusDetector::windowStats() {
     auto windowName = getStringProperty(window, m_display, "_NET_WM_NAME");
     auto pid = getWindowProperty(window, m_display, "_NET_WM_PID");
 
-    return {
+    std::map<std::string, std::string>  ret = {
             {"_NET_WM_PID", fmt::format("{}", pid)},
             {"WM_CLASS", std::string{reinterpret_cast<char*>(windowClass)}},
             {"_NET_WM_NAME", std::string{reinterpret_cast<char*>(windowName)}},
     };
+
+    XFree(windowClass);
+    XFree(windowName);
+
+    return ret;
 }
 
 // https://stackoverflow.com/questions/57896007/detect-window-focus-changes-with-xcb
@@ -234,6 +242,9 @@ void InputFocusDetector::getAllWindowsFromRoot(Window root) {
             auto wmStr = std::string{reinterpret_cast<char*>(wmClass)};
             spdlog::info("child window class: {}", wmStr);
         }
+
+        XFree(childWinName);
+        XFree(wmClass);
 
         getAllWindowsFromRoot(child);
     }

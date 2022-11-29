@@ -21,6 +21,8 @@ void GwidiServer::start() {
                 watchedKeys.emplace_back(key);
             }
             m_inputReader->setWatchedKeys(watchedKeys);
+
+            delete[] event.watchedKeysReconfigEvent.watchedKeysList;    // free the list we were sent
         }
     });
     m_socketServer->beginListening();
