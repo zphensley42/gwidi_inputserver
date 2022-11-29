@@ -99,6 +99,10 @@ void LinuxInputReader::stopListening() {
 }
 
 bool LinuxInputReader::keyWatched(int code) {
+    // There is a special case for when we have an empty list -- we just allow all keys
+    if(m_watchedKeys.empty()) {
+        return true;
+    }
     return std::find(m_watchedKeys.begin(), m_watchedKeys.end(), code) != m_watchedKeys.end();
 }
 
