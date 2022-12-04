@@ -74,7 +74,7 @@ void LinuxInputReader::beginListening() {
                 if (pfd.revents & POLLIN) {
                     if(read(pfd.fd, &ev, sizeof(ev)) == sizeof(ev)) {
                         // value: or 0 for EV_KEY for release, 1 for keypress and 2 for autorepeat
-                        if(ev.type == EV_KEY && ev.code < 0x100) {
+                        if(ev.type == EV_KEY && ev.code < 0x100 && ev.value >= 0 && ev.value <= 1) {
                             if(keyWatched(ev.code)) {
                                 if((ev.value == 0 || ev.value == 1) && m_watchedKeyCb) {
                                     spdlog::info("sending key: {}, {}", ev.code, ev.value);
