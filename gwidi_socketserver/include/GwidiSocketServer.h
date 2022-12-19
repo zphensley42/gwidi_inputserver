@@ -7,6 +7,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include "LinuxSendInput.h"
 
 namespace gwidi::udpsocket {
 
@@ -14,7 +15,8 @@ enum ServerEventType {
     EVENT_HELLO = 0,
     EVENT_KEY = 1,
     EVENT_FOCUS = 2,
-    EVENT_WATCHEDKEYS_RECONFIGURE = 3
+    EVENT_WATCHEDKEYS_RECONFIGURE = 3,
+    EVENT_SENDINPUT = 4
 };
 
 struct KeyEvent {
@@ -102,6 +104,7 @@ public:
     void sendKeyEvent(const KeyEvent &event);
     void sendWindowFocusEvent(const std::string &windowName, bool hasFocus);
 
+    ReaderSocketServer();
     ~ReaderSocketServer();
 
 private:
@@ -110,6 +113,7 @@ private:
     std::atomic_bool m_thAlive{false};
     std::shared_ptr<std::thread> m_th;
     std::shared_ptr<ReaderSocketClient> m_socketClient{nullptr};
+    std::unique_ptr<SendInput> m_sendInput;
 };
 
 }

@@ -201,11 +201,31 @@ void ReaderSocketServer::processEvent(char *buffer, struct sockaddr_in socketIn_
             }
             break;
         }
+        case ServerEventType::EVENT_SENDINPUT: {
+            // Parse out the data
+            std::size_t keyNameSize;
+            memcpy(&keyNameSize, buffer + bufferOffset, sizeof(std::size_t));
+            bufferOffset += sizeof(std::size_t);
+
+            char* keyName = new char[keyNameSize];
+            memcpy(&keyName[0], buffer + bufferOffset, keyNameSize);
+            bufferOffset += keyNameSize;
+
+            // Pass the data to the input reader
+            if(m_sendInput) {
+                m_sendInput->sendInput(std::string{keyName});
+            }
+            break;
+        }
         default: {
             spdlog::warn("Message type not supported, message: {}", buffer);
             break;
         }
     }
+}
+
+ReaderSocketServer::ReaderSocketServer() {
+    m_sendInput = std::make_unique<SendInput>();
 }
 
 

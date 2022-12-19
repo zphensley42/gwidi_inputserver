@@ -21,7 +21,7 @@ int main() {
                 socketServer->sendWindowFocusEvent(windowName, false);
             }
         },
-        [&gwidiServer](int code, int type){
+        [&gwidiServer](int code, int type) {
             spdlog::info("Key {}, type: {} detected", code, type);
             auto socketServer = gwidiServer->socketServer();
             if(socketServer) {
